@@ -60,7 +60,7 @@ def reply_to_broadcasts(name: str, server: Server):
             data, addr = udp_socket.recvfrom(4096)
             if data.decode() == BROADCAST_PACKET:
                 udp_socket.sendto(f"{BROADCAST_RESPONSE}{name}".encode(), addr)
-        except TimeoutError:
+        except (TimeoutError, socket.timeout):
             if server.is_done():
                 udp_socket.close()
                 return
@@ -88,10 +88,7 @@ class ClientConnection(Thread):
         while not self._stopped:
             try:
                 self._q.put((self._sock.full_receive(), self))
-            except TimeoutError:
-                continue
-            # Older versions of Python and socket use socket.timeout.
-            except socket.timeout:
+            except (TimeoutError, socket.timeout):
                 continue
             except OSError as e:
                 if self._stopped:
@@ -309,7 +306,7 @@ class ConnectionGetter(Thread):
                 # lcsock.setup_encryption()
                 self.setup_encryption(lcsock)
                 self._server.add_client(lcsock)
-            except TimeoutError:
+            except (TimeoutError, socket.timeout):
                 continue
             except ValueError:
                 lcsock.close()
