@@ -23,7 +23,6 @@ from threading import Thread
 from typing import List, Tuple, Dict
 from queue import Queue
 import socket
-from debugprint import sprint
 from netifaces import interfaces, ifaddresses, AF_INET
 import sys
 import time
@@ -232,7 +231,6 @@ class Server(Thread):
 
 
     def _handle_packet(self, packet: Dict[str, str], sender: ClientConnection) -> None:
-        sprint(packet, sender.get_name())
         try:
             action = packet["action"]
             msg = packet["message"]

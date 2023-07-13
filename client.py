@@ -2,7 +2,6 @@ import socket
 import sys
 from server import Server, DEFAULT_PORT, BROADCAST_RESPONSE, BROADCAST_PACKET
 from lcsocket import LCSocket
-from debugprint import cprint
 from client_ui import msg_handler, clear_current_line
 import threading
 import netifaces
