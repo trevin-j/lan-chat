@@ -1,1 +1,3 @@
 # lan-chat
+
+Documentation coming soon...
