@@ -41,9 +41,12 @@ class NoMoreClients(Exception):
 
 def get_ip_addresses() -> List[str]:
     addresses = []
-    for ifaceName in interfaces():
-        addrs = [i['addr'] for i in ifaddresses(ifaceName).setdefault(AF_INET, [{'addr':'No IP addr'}] )]
-        addresses.extend(addrs)
+    for interface in interfaces():
+        interface_addresses = ifaddresses(interface)
+        if AF_INET in interface_addresses.keys():
+            for address in interface_addresses[AF_INET]:
+                if "addr" in address.keys():
+                    addresses.append(address["addr"])
     return addresses
 
 
@@ -87,11 +90,14 @@ class ClientConnection(Thread):
                 self._q.put((self._sock.full_receive(), self))
             except TimeoutError:
                 continue
+            # Older versions of Python and socket use socket.timeout.
+            except socket.timeout:
+                continue
             except OSError as e:
                 if self._stopped:
                     break
                 else:
-                    print("ERR:", e.with_traceback())
+                    print("ERR:", e, str(e))
         
 
     def set_name(self, name: str) -> None:

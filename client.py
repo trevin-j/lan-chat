@@ -55,11 +55,15 @@ def get_broadcast_addresses() -> str:
 
     for interface in netifaces.interfaces():
         addresses = netifaces.ifaddresses(interface)
-        for addr_group in addresses[netifaces.AF_INET]:
-            try:
-                broadcast_addresses.append(addr_group["broadcast"])
-            except:
-                continue
+        try:
+            for addr_group in addresses[netifaces.AF_INET]:
+                try:
+                    broadcast_addresses.append(addr_group["broadcast"])
+                except:
+                    continue
+        except KeyError:
+            # Addresses doesn't have valid IP address, skip it.
+            continue
 
     return broadcast_addresses
 
