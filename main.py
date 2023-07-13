@@ -9,6 +9,7 @@ from typing import Tuple, List
 import time
 from crypto import get_private_key, diffie_first_step, diffie_second_step
 
+PROGRAM_VERSION = "0.1.1"
 
 def user_choose_host() -> str:
     # get available rooms
@@ -124,7 +125,7 @@ def main():
         return
     
     if "--version" in sys.argv or "-v" in sys.argv:
-        print("LAN-Chat version 0.1.0")
+        print(f"LAN-Chat version {PROGRAM_VERSION}")
         return
 
     if "--find" in sys.argv:
