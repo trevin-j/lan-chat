@@ -91,7 +91,28 @@ def get_available_rooms() -> List[Tuple[str, str]]:
     return all_rooms
 
 
+def print_help() -> None:
+    print("Usage")
+    print("--------------")
+    print("-h   --help    Display this message")
+    print("-v --version   Display program version")
+    print("--find         Retrieve a list of joinable rooms on the LAN")
+    print("--join         Find rooms on LAN, then select one to join")
+    print("--host         Host a room on the LAN")
+    print("--invisible    Make a hosted game not appear on the LAN; Must direct connect via IP")
+    print("--direct {IP}  Directly connect to the host at the IP address")
+
+
+
 def main():
+    if "--help" in sys.argv or "-h" in sys.argv or len(sys.argv) < 2:
+        print_help()
+        return
+    
+    if "--version" in sys.argv or "-v" in sys.argv:
+        print("LAN-Chat version 0.1.0")
+        return
+
     if "--find" in sys.argv:
         rooms = get_available_rooms()
         print(f"Found {len(rooms)} hosts.")
@@ -110,8 +131,10 @@ def main():
         server.start()
         if not "--invisible" in sys.argv:
             server.make_visible()
-    else:
-        pass
+    
+    elif not "--join" in sys.argv and not "--direct" in sys.argv:
+        print_help()
+        return
 
     raw_connection = connect_to_server()
     if not raw_connection:
