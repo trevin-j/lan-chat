@@ -20,7 +20,7 @@ def user_choose_host() -> str:
     # return hostname of user choice
     try:
         choice = int(input("Choose host> "))
-        return hosts[i][1]
+        return hosts[choice][1]
     except:
         # Don't bother with user being dumb or if no hosts.
         return None
