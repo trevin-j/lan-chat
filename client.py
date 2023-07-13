@@ -3,10 +3,11 @@ import sys
 from server import Server, DEFAULT_PORT, BROADCAST_RESPONSE, BROADCAST_PACKET
 from lcsocket import LCSocket
 from debugprint import cprint
-from client_ui import t_print_msgs, clear_current_line
+from client_ui import msg_handler, clear_current_line
 import threading
 import netifaces
 from typing import Tuple, List
+import time
 
 
 def user_choose_host() -> str:
@@ -67,7 +68,7 @@ def get_available_rooms() -> List[Tuple[str, str]]:
     broadcast_addresses = get_broadcast_addresses()
 
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
-    udp_sock.settimeout(1)
+    udp_sock.settimeout(0.25)
     
     # Tell socket to allow broadcasting.
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
@@ -99,7 +100,9 @@ def main():
         return
     
     name = False
-    if "--host" in sys.argv:
+
+    am_host = "--host" in sys.argv
+    if am_host:
         room_name = input("Room name: ")
         name = input("Name: ")
         print("Hosting.")
@@ -113,19 +116,27 @@ def main():
     raw_connection = connect_to_server()
     if not raw_connection:
         return
-    lcsocket = LCSocket(raw_connection)
+    lcsocket = LCSocket(raw_connection)    
     if not name:
         name = input("Name: ")
     lcsocket.full_send({"action": "CONNECT", "message": name, "source": name})
 
-    ui_thread = threading.Thread(target=t_print_msgs, args=(lcsocket,))
+    ui_thread = threading.Thread(target=msg_handler, args=(lcsocket,))
     ui_thread.start()
+    time.sleep(0.1)
 
     while True:
         msg = input("> ")
         clear_current_line()
+        if not lcsocket.is_connected():
+            break
         if msg != "":
             lcsocket.full_send({"action": "MESSAGE", "message": msg, "source": name})
+
+    if am_host:
+        server.join()
+
+    ui_thread.join()
         
 
 

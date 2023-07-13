@@ -22,8 +22,9 @@ def print_chat():
 
 
 
-def add_chat(msg):
-    chat_history.insert(0, msg)
+def add_chat(msg: str):
+    for line in msg.split("\n"):
+        chat_history.insert(0, line)
     print_chat()
 
 
@@ -36,38 +37,34 @@ def clear_current_line():
 def clear_last_line():
     sys.stdout.write("\033[F\033[2K\033[1G")
 
-
-for i in range(20):
-    print()
-
-def process_word_wrap(msgs):
+def process_word_wrap(msg):
     terminal_width = get_terminal_size()[0]
     new_msgs = []
-    for msg in msgs:
-        while True:
-            if len(msg) > terminal_width:
-                new_msgs.append(msg[:terminal_width]+"\n")
-                msg = msg[terminal_width:]
-            else:
-                new_msgs.append(msg)
-                break
+    while True:
+        if len(msg) > terminal_width:
+            new_msgs.append(msg[:terminal_width]+"\n")
+            msg = msg[terminal_width:]
+        else:
+            new_msgs.append(msg)
+            break
             
     return new_msgs
 
 
-def t_print_msgs(client: LCSocket):
+# Thread
+def msg_handler(client: LCSocket):
+    for i in range(get_terminal_size()[1]):
+        print()
+
     while True:
         data = client.full_receive()
         msg = data["message"]
         sender = data["source"]
 
-        msgs = [sender + ": " + msg]
+        msg = "[" + sender + "] " + msg
 
-        msgs = process_word_wrap(msgs)
+        add_chat(msg)
 
-        for m in msgs:
-            add_chat(m)
-
-
-
-
+        if data["action"] == "DISCONNECT":
+            client.close()
+            return

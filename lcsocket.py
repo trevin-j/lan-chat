@@ -13,6 +13,9 @@ class LCSocket:
         self._partial_packet = ""
         self._sock: socket.socket = sock
 
+        # Socket should already be connected at construction of LCSocket
+        self._connected = True
+
     def full_send(self, data: Dict[str, str]) -> None:
         """
         Send a full packet.
@@ -51,7 +54,15 @@ class LCSocket:
             for packet in separate_packets:
                 self._msg_q.append(json.loads(packet))
 
-
+    def settimeout(self, timeout: float) -> None:
+        self._sock.settimeout(timeout)
+        
+    def close(self) -> None:
+        self._connected = False
+        return self._sock.close()
+    
+    def is_connected(self) -> bool:
+        return self._connected
 
 
 # print("abcabcacbacb".split("ca"))

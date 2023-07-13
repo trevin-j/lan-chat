@@ -24,6 +24,9 @@ from typing import List, Tuple, Dict
 from queue import Queue
 import socket
 from debugprint import sprint
+from netifaces import interfaces, ifaddresses, AF_INET
+import sys
+import time
 
 from lcsocket import LCSocket
 
@@ -32,16 +35,32 @@ DEFAULT_PORT = 29001
 BROADCAST_PACKET = "lan-chat-find"
 BROADCAST_RESPONSE = "lan-chat-found-"
 
-def reply_to_broadcasts(name: str):
+class NoMoreClients(Exception):
+    pass
+
+
+def get_ip_addresses() -> List[str]:
+    addresses = []
+    for ifaceName in interfaces():
+        addrs = [i['addr'] for i in ifaddresses(ifaceName).setdefault(AF_INET, [{'addr':'No IP addr'}] )]
+        addresses.extend(addrs)
+    return addresses
+
+
+def reply_to_broadcasts(name: str, server: Server):
 
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.bind(("", DEFAULT_PORT))
-
+    udp_socket.settimeout(0.2)
     while True:
-        data, addr = udp_socket.recvfrom(4096)
-        if data.decode() == BROADCAST_PACKET:
-            udp_socket.sendto(f"{BROADCAST_RESPONSE}{name}".encode(), addr)
-
+        try:
+            data, addr = udp_socket.recvfrom(4096)
+            if data.decode() == BROADCAST_PACKET:
+                udp_socket.sendto(f"{BROADCAST_RESPONSE}{name}".encode(), addr)
+        except TimeoutError:
+            if server.is_done():
+                udp_socket.close()
+                return
 
 
 class ClientConnection(Thread):
@@ -52,25 +71,46 @@ class ClientConnection(Thread):
         """
         super().__init__()
         self._id = id
-        self._sock: LCSocket = sock
+        self._sock = sock
+        self._sock.settimeout(0.2)
         self._q = q
         self._name = ""
+        self._stopped = False
 
     def is_ready(self) -> bool:
         return self._name != ""
 
     def run(self):
-        while True:
-            self._q.put((self._sock.full_receive(), self))
+        global client_threads_alive
+        while not self._stopped:
+            try:
+                self._q.put((self._sock.full_receive(), self))
+            except TimeoutError:
+                continue
+            except OSError as e:
+                if self._stopped:
+                    break
+                else:
+                    print("ERR:", e.with_traceback())
+        
 
     def set_name(self, name: str) -> None:
         self._name = name
 
     def get_name(self) -> str:
-        return self._name
+        return f"#{self._id}:{self._name}"
     
     def send(self, packet: Dict[str, str]) -> None:
         self._sock.full_send(packet)
+
+    def get_id(self) -> int:
+        return self._id
+
+    def disconnect(self, msg: str = "You disconnected from the server. Press enter to exit.") -> None:
+        self._stopped = True
+        self.send({"action": "DISCONNECT", "message": msg, "source": "SERVER"})
+        self._sock.close()
+
     
 
 class Server(Thread):
@@ -81,22 +121,115 @@ class Server(Thread):
         self._clients: List[ClientConnection] = []
 
         self._sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-        self._sock.bind(("", DEFAULT_PORT))
+        try:
+            self._sock.bind(("", DEFAULT_PORT))
+        except OSError:
+            print("The port for this application is already in use or wasn't properly freed last time.")
+            print("Would you like to wait until it's available? (y/n)")
+            if input("> ") == "y":
+                num_dots = 0
+                success = False
+                while not success:
+                    print("\033[2K\033[0EWaiting" + "." * num_dots + "\033[0E", end="", flush=True)
+                    num_dots = (num_dots + 1) % 4
+                    try:
+                        self._sock.bind(("", DEFAULT_PORT))
+                        success = True
+                    except OSError:
+                        time.sleep(0.15)
+                print("\033[2K\033[0EPort acquired.")
+                time.sleep(3)
+            else:
+                sys.exit()
+
         self._sock.listen(1)
+        self._sock.settimeout(0.2)
+
+        self._next_client_id = 0
+
+        self._replier_thread = None
+
+        self._ips = get_ip_addresses()
 
         self._host_name = name
 
+        self._done = False
+
     def run(self):
         """ Run the thread. """
-        self._get_connections()
+        connections_thread = ConnectionGetter(self)
+        connections_thread.start()
 
         while True:
             packet, sender = self._recv()
-            self._handle_packet(packet, sender)
+            try:
+                self._handle_packet(packet, sender)
+            except NoMoreClients:
+                self._done = True
+                connections_thread.stop()
+                connections_thread.join()
+                if self._replier_thread is not None:
+                    self._replier_thread.join()
+                return
+            
+    def is_done(self) -> bool:
+        return self._done
 
     def make_visible(self):
-        replier_thread = Thread(target=reply_to_broadcasts, args=(self._host_name,))
-        replier_thread.start()
+        self._replier_thread = Thread(target=reply_to_broadcasts, args=(self._host_name, self))
+        self._replier_thread.start()
+
+    def _info_msg(self, sender: ClientConnection) -> str:
+        msg =   "Server info:\n"
+        msg +=  "         ---------------------\n"
+        msg += f"         Server name: {self._host_name}\n"
+        msg += f"         Server IPs: {', '.join(self._ips)}\n"
+        msg += f"         Host: {self._clients[0].get_name()}\n"
+        msg += f"         Connected users: {len(self._clients)}\n"
+        for client in self._clients:
+            msg += f"           {client.get_name()}\n"
+        msg += f"         Your username is {sender.get_name()}"
+        return msg
+    
+    def _help_msg(self) -> str:
+        return \
+         """Help menu:
+         -----------------
+         /info - receive server info
+         /h /help - display help menu
+         /q /quit - disconnect
+         /kick {id} - kick the player with the id
+         /ban {id} - bans the player with the id by blacklisting their ip address"""
+    
+    def _disconnect_client(self, client_id: int) -> bool:
+        disconnected = False
+        for client in reversed(self._clients):
+            if client.get_id() == client_id or client_id == 0:
+                client.disconnect()
+                client.join()
+                self._clients.remove(client)
+                self._send_all_clients({"action": "MESSAGE", "message": f"{client.get_name()} disconnected.", "source": "SERVER"})
+                if len(self._clients) == 0:
+                    raise NoMoreClients
+                disconnected = True
+        return disconnected
+                
+
+    def _handle_command(self, sender: ClientConnection, cmd: str) -> None:
+        msg = ""
+        if cmd == "info":
+            msg = self._info_msg(sender)
+        elif cmd == "help" or cmd == "h":
+            msg = self._help_msg()
+        elif cmd in ("q", "quit"):
+            self._disconnect_client(sender.get_id())
+            return
+        else:
+            sender.send({"action": "ERROR", "message": f"ERR 3: UNKNOWN COMMAND: /{cmd}", "source": "SERVER"})
+            return
+
+        sender.send({"action": "MESSAGE", "message": msg, "source": "SERVER"})
+
 
     def _handle_packet(self, packet: Dict[str, str], sender: ClientConnection) -> None:
         sprint(packet, sender.get_name())
@@ -109,16 +242,20 @@ class Server(Thread):
         
         if action == "MESSAGE":
             if not sender.is_ready():
-                sender.send({"action": "ERROR", "message": "1: CANNOT SEND MESSAGE BEFORE FULLY CONNECTED", "source": "SERVER"})
+                sender.send({"action": "ERROR", "message": "ERR 1: CANNOT SEND MESSAGE BEFORE FULLY CONNECTED", "source": "SERVER"})
+                return
+            if msg[0] == "/" or msg[0] == "\\":
+                self._handle_command(sender, msg[1:])
                 return
             self._send_all_clients({"action": "MESSAGE", "message": msg, "source": sender.get_name()})
             return
         
         if action == "CONNECT":
             if msg == "":
-                sender.send({"action": "ERROR", "message": "2: NAME CANNOT BE BLANK", "source": "SERVER"})
+                sender.send({"action": "ERROR", "message": "ERR 2: NAME CANNOT BE BLANK", "source": "SERVER"})
                 return
             sender.set_name(msg)
+            self._send_all_clients({"action": "MESSAGE", "message": f"{sender.get_name()} has joined.", "source": "SERVER"})
             return
 
         
@@ -128,14 +265,31 @@ class Server(Thread):
 
     def _recv(self) -> Tuple[Dict[str, str], ClientConnection]:
         return self._q.get()
+    
+    def accept(self) -> Tuple[str, Tuple[str, int]]:
+        return self._sock.accept()
+    
+    def add_client(self, sock: socket.socket) -> None:
+        self._clients.append(ClientConnection(self._next_client_id, LCSocket(sock), self._q))
+        self._next_client_id += 1
+        self._clients[-1].start()
 
-    def _get_connections(self) -> None:
-        # Waiting on clients to join
-        client1_sock, ip1 = self._sock.accept()
-        client2_sock, ip2 = self._sock.accept()
-        self._clients.append(ClientConnection(0, LCSocket(client1_sock), self._q))
-        self._clients.append(ClientConnection(1, LCSocket(client2_sock), self._q))
-        for client in self._clients:
-            client.start()
 
+# Thread to get new connections
+class ConnectionGetter(Thread):
+    def __init__(self, server: Server) -> None:
+        super().__init__()
+        self._stopped = False
+        self._server = server
+
+    def stop(self) -> None:
+        self._stopped = True
+
+    def run(self) -> None:
+        while not self._stopped:
+            try:
+                client_sock, addr = self._server.accept()
+                self._server.add_client(client_sock)
+            except TimeoutError:
+                continue
 
