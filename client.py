@@ -7,6 +7,7 @@ import threading
 import netifaces
 from typing import Tuple, List
 import time
+from crypto import get_private_key, diffie_first_step, diffie_second_step
 
 
 def user_choose_host() -> str:
@@ -102,6 +103,16 @@ def print_help() -> None:
     print("--direct {IP}  Directly connect to the host at the IP address")
 
 
+def setup_encryption(lcsocket: LCSocket) -> None:
+    n, g, other_partial = lcsocket.full_receive()["message"].split(",")
+    n = int(n)
+    g = int(g)
+    other_partial = int(other_partial)
+    private_key = get_private_key(n)
+    my_partial = diffie_first_step(private_key, n, g)
+    lcsocket.full_send({"action": "SETUP_ENCRYPTION", "message": str(my_partial), "source": "CLIENT"})
+    symmetrical_key = diffie_second_step(other_partial, private_key, n)
+    lcsocket.set_encryption_key(symmetrical_key)
 
 def main():
     if "--help" in sys.argv or "-h" in sys.argv or len(sys.argv) < 2:
@@ -138,7 +149,10 @@ def main():
     raw_connection = connect_to_server()
     if not raw_connection:
         return
-    lcsocket = LCSocket(raw_connection)    
+    lcsocket = LCSocket(raw_connection)   
+
+    setup_encryption(lcsocket)
+
     if not name:
         name = input("Name: ")
     lcsocket.full_send({"action": "CONNECT", "message": name, "source": name})

@@ -26,6 +26,7 @@ import socket
 from netifaces import interfaces, ifaddresses, AF_INET
 import sys
 import time
+from crypto import get_n_and_g, get_private_key, diffie_first_step, diffie_second_step
 
 from lcsocket import LCSocket
 
@@ -116,6 +117,12 @@ class Server(Thread):
     def __init__(self, name):
         """ Initialize. """
         super().__init__()
+
+        self._n, self._g = get_n_and_g()
+        self._private_key = get_private_key(self._n)
+        # Calculate our partial key
+        self._partial_key = diffie_first_step(self._private_key, self._n, self._g)
+
         self._q: Queue[Tuple[Dict[str, str], ClientConnection]] = Queue()
         self._clients: List[ClientConnection] = []
 
@@ -156,7 +163,7 @@ class Server(Thread):
 
     def run(self):
         """ Run the thread. """
-        connections_thread = ConnectionGetter(self)
+        connections_thread = ConnectionGetter(self, self._n, self._g, self._private_key, self._partial_key)
         connections_thread.start()
 
         while True:
@@ -267,18 +274,23 @@ class Server(Thread):
     def accept(self) -> Tuple[str, Tuple[str, int]]:
         return self._sock.accept()
     
-    def add_client(self, sock: socket.socket) -> None:
-        self._clients.append(ClientConnection(self._next_client_id, LCSocket(sock), self._q))
+    def add_client(self, lcsock: LCSocket) -> None:
+        self._clients.append(ClientConnection(self._next_client_id, lcsock, self._q))
         self._next_client_id += 1
         self._clients[-1].start()
 
 
 # Thread to get new connections
 class ConnectionGetter(Thread):
-    def __init__(self, server: Server) -> None:
+    def __init__(self, server: Server, n: int, g: int, secret_key: int, partial_key: int) -> None:
         super().__init__()
         self._stopped = False
         self._server = server
+
+        self._n = n
+        self._g = g
+        self._secret_key = secret_key
+        self._partial_key = partial_key
 
     def stop(self) -> None:
         self._stopped = True
@@ -287,7 +299,30 @@ class ConnectionGetter(Thread):
         while not self._stopped:
             try:
                 client_sock, addr = self._server.accept()
-                self._server.add_client(client_sock)
+                lcsock = LCSocket(client_sock)
+                # lcsock.setup_encryption()
+                self.setup_encryption(lcsock)
+                self._server.add_client(lcsock)
             except TimeoutError:
                 continue
+            except ValueError:
+                lcsock.close()
+                continue
 
+    def setup_encryption(self, lcsock: LCSocket) -> None:
+        """
+        Communicate with client to set up e2e encryption.
+        Server sends encryption data packet to client
+        Client sends one back
+        """
+        # Inform client of n and g and our partial key
+        lcsock.full_send({"action": "SETUP_ENCRYPTION", "message": f"{self._n},{self._g},{self._partial_key}", "source": "SERVER"})
+        # Receive client's partial key
+        pack = lcsock.full_receive()
+        if pack["action"] != "SETUP_ENCRYPTION":
+            raise ValueError
+        other_partial = int(pack["message"])
+        
+        symmetrical_key = diffie_second_step(other_partial, self._secret_key, self._n)
+
+        lcsock.set_encryption_key(symmetrical_key)
