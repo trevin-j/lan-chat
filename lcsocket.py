@@ -4,9 +4,6 @@ import json
 from crypto import encrypt, decrypt
 
 
-CRLF = "\r\n"
-SEPARATOR = CRLF*2
-
 class LCSocket:
     def __init__(self, sock: socket.socket) -> None:
         self._msg_q = []
