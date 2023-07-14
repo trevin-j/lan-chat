@@ -90,9 +90,7 @@ def get_available_rooms() -> List[Tuple[str, str]]:
             if BROADCAST_RESPONSE in response:
                 name = response.split(BROADCAST_RESPONSE)[1]
                 all_rooms.append((name,addr[0]))
-    except TimeoutError:
-        pass
-    except socket.timeout:
+    except (TimeoutError, socket.timeout):
         pass
 
     return all_rooms
