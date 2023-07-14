@@ -79,6 +79,7 @@ class ClientConnection(Thread):
         self._q = q
         self._name = ""
         self._stopped = False
+        self._connected = True
 
     def is_ready(self) -> bool:
         return self._name != ""
@@ -95,6 +96,10 @@ class ClientConnection(Thread):
                     break
                 else:
                     print("ERR:", e, str(e))
+            except AttributeError:
+                # For some reason, trying to decrypt when disconnected yields attributeerror. So, disconnect.
+                self._q.put(({"action": "MESSAGE", "message": "/q", "source": "CLIENT"}, self))
+                self._connected = False
         
 
     def set_name(self, name: str) -> None:
@@ -104,14 +109,20 @@ class ClientConnection(Thread):
         return f"#{self._id}:{self._name}"
     
     def send(self, packet: Dict[str, str]) -> None:
-        self._sock.full_send(packet)
+        try:
+            self._sock.full_send(packet)
+        except BrokenPipeError:
+            # Trick server into seeing client disconnecting
+            self._q.put(({"action": "MESSAGE", "message": "/q", "source": "CLIENT"}, self))
+            self._connected = False
 
     def get_id(self) -> int:
         return self._id
 
     def disconnect(self, msg: str = "You disconnected from the server. Press enter to exit.") -> None:
         self._stopped = True
-        self.send({"action": "DISCONNECT", "message": msg, "source": "SERVER"})
+        if self._connected:
+            self.send({"action": "DISCONNECT", "message": msg, "source": "SERVER"})
         self._sock.close()
 
     
@@ -319,7 +330,11 @@ class ConnectionGetter(Thread):
         Client sends one back
         """
         # Inform client of n and g and our partial key
-        lcsock.full_send({"action": "SETUP_ENCRYPTION", "message": f"{self._n},{self._g},{self._partial_key}", "source": "SERVER"})
+        try:
+            lcsock.full_send({"action": "SETUP_ENCRYPTION", "message": f"{self._n},{self._g},{self._partial_key}", "source": "SERVER"})
+        except BrokenPipeError:
+            lcsock.close()
+            return
         # Receive client's partial key
         pack = lcsock.full_receive()
         if pack["action"] != "SETUP_ENCRYPTION":
