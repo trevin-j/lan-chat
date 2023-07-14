@@ -92,6 +92,8 @@ def get_available_rooms() -> List[Tuple[str, str]]:
                 all_rooms.append((name,addr[0]))
     except TimeoutError:
         pass
+    except socket.timeout:
+        pass
 
     return all_rooms
 
