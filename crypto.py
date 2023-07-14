@@ -15,7 +15,7 @@ def decrypt(key: int, encrypted_value_bytes: bytes) -> str:
 
 def get_n_and_g() -> Tuple[int, int]:
     """ Get a suitable n and g value such that we can use DES. Returns (n, g). """
-    return get_prime_of_size(64), 13
+    return get_prime_of_size(64), get_prime_of_size(32)
 
 def diffie_first_step(secret_key: int, n: int, g: int) -> int:
     """
