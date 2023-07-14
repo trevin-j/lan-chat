@@ -99,9 +99,9 @@ def get_available_rooms() -> List[Tuple[str, str]]:
 def print_help() -> None:
     print("Usage")
     print("--------------")
-    print("-h   --help    Display this message")
+    print("-h --help      Display this message")
     print("-v --version   Display program version")
-    print("--find         Retrieve a list of joinable rooms on the LAN")
+    print("--find         Display a list of joinable rooms on the LAN")
     print("--join         Find rooms on LAN, then select one to join")
     print("--host         Host a room on the LAN")
     print("--invisible    Make a hosted game not appear on the LAN; Must direct connect via IP")
