@@ -57,7 +57,14 @@ def msg_handler(client: LCSocket):
         print()
 
     while True:
-        data = client.full_receive()
+        # When trying to receive from client, will raise AttributeError if host disconnected.
+        try:
+            data = client.full_receive()
+        except AttributeError:
+            client.close()
+            add_chat("Host unexpectedly disconnected. Press enter to exit.")
+            return
+        
         msg = data["message"]
         sender = data["source"]
 

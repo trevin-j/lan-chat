@@ -172,7 +172,10 @@ def main():
         if not lcsocket.is_connected():
             break
         if msg != "":
-            lcsocket.full_send({"action": "MESSAGE", "message": msg, "source": name})
+            try:
+                lcsocket.full_send({"action": "MESSAGE", "message": msg, "source": name})
+            except BrokenPipeError:
+                break
 
     if am_host:
         server.join()
