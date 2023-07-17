@@ -1,10 +1,18 @@
+"""
+This module contains a class for lan-chat socket.
+"""
+
 from typing import Dict
 import socket
 import json
+
 from crypto import encrypt, decrypt
 
 
 class LCSocket:
+    """
+    lan-chat socket - a class to wrap around socket.socket.
+    """
     def __init__(self, sock: socket.socket) -> None:
         self._msg_q = []
         self._partial_packet = ""
@@ -15,9 +23,11 @@ class LCSocket:
 
         self._encryption_key = None
 
+
     def set_encryption_key(self, key):
         """ Set the encryption key and enable encryption from here on. """
         self._encryption_key = key
+
 
     def full_send(self, data: Dict[str, str]) -> None:
         """
@@ -26,8 +36,9 @@ class LCSocket:
         if self._encryption_key is None:
             self._sock.sendall(json.dumps(data).encode())
             return
-        
+
         self._sock.sendall(encrypt(self._encryption_key, json.dumps(data)))
+
 
     def full_receive(self) -> Dict[str, str]:
         """
@@ -37,18 +48,28 @@ class LCSocket:
         if self._encryption_key is None:
             msg = self._sock.recv(4096).decode()
             return json.loads(msg)
-        
+
         msg = decrypt(self._encryption_key, self._sock.recv(4096))
         return json.loads(msg)
-           
+
 
     def settimeout(self, timeout: float) -> None:
+        """
+        Set the timeout of the socket.
+        """
         self._sock.settimeout(timeout)
-        
+
+
     def close(self) -> None:
+        """
+        Close the socket.
+        """
         self._connected = False
         return self._sock.close()
-    
-    def is_connected(self) -> bool:
-        return self._connected
 
+
+    def is_connected(self) -> bool:
+        """
+        Check if the socket is connected.
+        """
+        return self._connected
