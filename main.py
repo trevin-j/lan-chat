@@ -9,7 +9,7 @@ from typing import Tuple, List
 import time
 from crypto import get_private_key, diffie_first_step, diffie_second_step
 
-PROGRAM_VERSION = "0.1.1"
+PROGRAM_VERSION = "0.1.2"
 
 def user_choose_host() -> str:
     # get available rooms
