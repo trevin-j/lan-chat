@@ -12,3 +12,5 @@ pip install -r requirements.txt
 
 See usage of program via `python main.py --help`
 
+When in chat, use `/h` to see in-chat command help
+
