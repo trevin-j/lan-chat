@@ -1,17 +1,27 @@
+"""
+This is the entrypoint for this Python application.
+It is all the client-side code and is what spawns off the server and UI threads.
+"""
+
+from typing import Tuple, List
 import socket
+import threading
+import time
 import sys
+
+import netifaces
+
 from server import Server, DEFAULT_PORT, BROADCAST_RESPONSE, BROADCAST_PACKET
 from lcsocket import LCSocket
 from client_ui import msg_handler, clear_current_line
-import threading
-import netifaces
-from typing import Tuple, List
-import time
 from crypto import get_private_key, diffie_first_step, diffie_second_step
 
 PROGRAM_VERSION = "0.1.1"
 
 def user_choose_host() -> str:
+    """
+    Display available hosts and let the user pick one.
+    """
     # get available rooms
     hosts = get_available_rooms()
     # user choice for which one
@@ -22,15 +32,18 @@ def user_choose_host() -> str:
     try:
         choice = int(input("Choose host> "))
         return hosts[choice][1]
-    except:
+    except (ValueError, IndexError):
         # Don't bother with user being dumb or if no hosts.
         return None
 
 
 def connect_to_server() -> socket.socket:
-    """ Connect to the server with the argv hostname and port. False indicates failed in some way. """
+    """
+    Connect to the server with the argv hostname and port.
+    False indicates failed in some way.
+    """
     hostname = ""
-    
+
     try:
         direct_loc = sys.argv.index("--direct")
         hostname = sys.argv[direct_loc+1]
@@ -39,19 +52,25 @@ def connect_to_server() -> socket.socket:
     except IndexError:
         print("Specify the hostname after --direct")
         return False
-    
-    if "--host" in sys.argv: hostname = "localhost"
-    elif hostname == "": hostname = user_choose_host()
-    if hostname is None: return False
+
+    if "--host" in sys.argv:
+        hostname = "localhost"
+    elif hostname == "":
+        hostname = user_choose_host()
+    if hostname is None:
+        return False
 
     port = DEFAULT_PORT
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.connect((hostname, port))
 
     return sock
-    
 
-def get_broadcast_addresses() -> str:
+
+def get_broadcast_addresses() -> List[str]:
+    """
+    Return a list of broadcast addresses.
+    """
     broadcast_addresses = []
 
     for interface in netifaces.interfaces():
@@ -60,7 +79,7 @@ def get_broadcast_addresses() -> str:
             for addr_group in addresses[netifaces.AF_INET]:
                 try:
                     broadcast_addresses.append(addr_group["broadcast"])
-                except:
+                except KeyError:
                     continue
         except KeyError:
             # Addresses doesn't have valid IP address, skip it.
@@ -70,17 +89,20 @@ def get_broadcast_addresses() -> str:
 
 
 def get_available_rooms() -> List[Tuple[str, str]]:
+    """
+    Using UDP, broadcast a message and receive the addresses of hosts on LAN.
+    """
     broadcast_addresses = get_broadcast_addresses()
 
     udp_sock = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_sock.settimeout(0.25)
-    
+
     # Tell socket to allow broadcasting.
     udp_sock.setsockopt(socket.SOL_SOCKET, socket.SO_BROADCAST, 1)
 
     for broadcast_address in broadcast_addresses:
         udp_sock.sendto(BROADCAST_PACKET.encode(), (broadcast_address, DEFAULT_PORT))
-    
+
     all_rooms = []
 
     try:
@@ -97,6 +119,9 @@ def get_available_rooms() -> List[Tuple[str, str]]:
 
 
 def print_help() -> None:
+    """
+    Display a help message.
+    """
     print("Usage")
     print("--------------")
     print("-h --help      Display this message")
@@ -109,21 +134,33 @@ def print_help() -> None:
 
 
 def setup_encryption(lcsocket: LCSocket) -> None:
-    n, g, other_partial = lcsocket.full_receive()["message"].split(",")
-    n = int(n)
-    g = int(g)
-    other_partial = int(other_partial)
-    private_key = get_private_key(n)
-    my_partial = diffie_first_step(private_key, n, g)
-    lcsocket.full_send({"action": "SETUP_ENCRYPTION", "message": str(my_partial), "source": "CLIENT"})
-    symmetrical_key = diffie_second_step(other_partial, private_key, n)
+    """
+    Communicate with the server to set up encryption using Diffie Hellman.
+    """
+    large_prime_n, large_prime_g, other_public_key = lcsocket.full_receive()["message"].split(",")
+    large_prime_n = int(large_prime_n)
+    large_prime_g = int(large_prime_g)
+    other_public_key = int(other_public_key)
+
+    private_key = get_private_key(large_prime_n)
+    public_key = diffie_first_step(private_key, large_prime_n, large_prime_g)
+
+    lcsocket.full_send(
+        {"action": "SETUP_ENCRYPTION", "message": str(public_key), "source": "CLIENT"}
+    )
+
+    symmetrical_key = diffie_second_step(other_public_key, private_key, large_prime_n)
     lcsocket.set_encryption_key(symmetrical_key)
 
+
 def main():
+    """
+    Program entrypoint.
+    """
     if "--help" in sys.argv or "-h" in sys.argv or len(sys.argv) < 2:
         print_help()
         return
-    
+
     if "--version" in sys.argv or "-v" in sys.argv:
         print(f"LAN-Chat version {PROGRAM_VERSION}")
         return
@@ -134,7 +171,7 @@ def main():
         for room in rooms:
             print(f"{room[0]} -- {room[1]}")
         return
-    
+
     name = False
 
     am_host = "--host" in sys.argv
@@ -144,17 +181,17 @@ def main():
         print("Hosting.")
         server = Server(room_name)
         server.start()
-        if not "--invisible" in sys.argv:
+        if "--invisible" not in sys.argv:
             server.make_visible()
-    
-    elif not "--join" in sys.argv and not "--direct" in sys.argv:
+
+    elif "--join" not in sys.argv and "--direct" not in sys.argv:
         print_help()
         return
 
     raw_connection = connect_to_server()
     if not raw_connection:
         return
-    lcsocket = LCSocket(raw_connection)   
+    lcsocket = LCSocket(raw_connection)
 
     setup_encryption(lcsocket)
 
@@ -181,15 +218,7 @@ def main():
         server.join()
 
     ui_thread.join()
-        
-
-
 
 
 if __name__ == "__main__":
-    try:
-        main()
-    except KeyboardInterrupt:
-        print("Exiting.")
-        sys.exit()
-    
+    main()
