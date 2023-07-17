@@ -1,33 +1,18 @@
 """
-
-A packet looks like the following:
-{
-    "action": {action},             -- options: CONNECT, DISCONNECT, ERROR, MESSAGE, FIND
-    "message": {message},           -- On ERROR, it is a reason, on MESSAGE it is the msg.
-    "source": {sender name}
-}
-
-A packet must have all the fields, even if they are just empty. Otherwise, the packet will be ignored.
-
-In sending and receiving packets, each packet is separated by 2 CRLF.
-
-On connection, client should send connect packet with message as their name.
-Server will then send a connect packet with the message as the other client's name.
-
-On disconnect, server sends disconnect packet with message as name of client who disconnected.
-
+This module holds the server-side code of the P2P application.
 """
 
 from __future__ import annotations
-from threading import Thread
 from typing import List, Tuple, Dict
-from queue import Queue
 import socket
-from netifaces import interfaces, ifaddresses, AF_INET
-import sys
+from threading import Thread
+from queue import Queue
 import time
-from crypto import get_n_and_g, get_private_key, diffie_first_step, diffie_second_step
+import sys
 
+import netifaces
+
+from crypto import get_n_and_g, get_private_key, diffie_first_step, diffie_second_step
 from lcsocket import LCSocket
 
 DEFAULT_PORT = 29001
@@ -36,22 +21,30 @@ BROADCAST_PACKET = "lan-chat-find"
 BROADCAST_RESPONSE = "lan-chat-found-"
 
 class NoMoreClients(Exception):
-    pass
+    """
+    Extremely simple exception to raise when the server has no more clients.
+    """
 
 
 def get_ip_addresses() -> List[str]:
+    """
+    Get a list of IP addresses that this host has.
+    """
     addresses = []
-    for interface in interfaces():
-        interface_addresses = ifaddresses(interface)
-        if AF_INET in interface_addresses.keys():
-            for address in interface_addresses[AF_INET]:
+    for interface in netifaces.interfaces():
+        interface_addresses = netifaces.ifaddresses(interface)
+        if netifaces.AF_INET in interface_addresses.keys():
+            for address in interface_addresses[netifaces.AF_INET]:
                 if "addr" in address.keys():
                     addresses.append(address["addr"])
     return addresses
 
 
 def reply_to_broadcasts(name: str, server: Server):
-
+    """
+    A function to be started as a thread which responds to UDP broadcasts
+    to inform of this host and address.
+    """
     udp_socket = socket.socket(socket.AF_INET, socket.SOCK_DGRAM)
     udp_socket.bind(("", DEFAULT_PORT))
     udp_socket.settimeout(0.2)
@@ -67,13 +60,21 @@ def reply_to_broadcasts(name: str, server: Server):
 
 
 class ClientConnection(Thread):
-    def __init__(self, id: int, sock: LCSocket, q: Queue[Tuple[Dict[str, str], ClientConnection]]) -> None:
+    """
+    A class to represent a connection to a client which operates as its own thread.
+    """
+    def __init__(
+            self,
+            client_id: int,
+            sock: LCSocket,
+            q: Queue[Tuple[Dict[str, str], ClientConnection]]
+        ) -> None:
         """
         Initialize.
         q: The queue to put received messages on.
         """
         super().__init__()
-        self._id = id
+        self._client_id = client_id
         self._sock = sock
         self._sock.settimeout(0.2)
         self._q = q
@@ -81,34 +82,51 @@ class ClientConnection(Thread):
         self._stopped = False
         self._connected = True
 
+
     def is_ready(self) -> bool:
+        """
+        Check if the client is ready to be used.
+        """
         return self._name != ""
 
+
     def run(self):
-        global client_threads_alive
+        """
+        Run the thread.
+        """
         while not self._stopped:
             try:
                 self._q.put((self._sock.full_receive(), self))
             except (TimeoutError, socket.timeout):
                 continue
-            except OSError as e:
+            except OSError as error:
                 if self._stopped:
                     break
-                else:
-                    print("ERR:", e, str(e))
+                print("ERR:", error, str(error))
             except AttributeError:
-                # For some reason, trying to decrypt when disconnected yields attributeerror. So, disconnect.
+                # Trying to decrypt when disconnected yields attributeerror. So, disconnect.
                 self._q.put(({"action": "MESSAGE", "message": "/q", "source": "CLIENT"}, self))
                 self._connected = False
-        
+
 
     def set_name(self, name: str) -> None:
+        """
+        Set the client name.
+        """
         self._name = name
 
+
     def get_name(self) -> str:
-        return f"#{self._id}:{self._name}"
-    
+        """
+        Get the client name.
+        """
+        return f"#{self._client_id}:{self._name}"
+
+
     def send(self, packet: Dict[str, str]) -> None:
+        """
+        Send a packet to this client.
+        """
         try:
             self._sock.full_send(packet)
         except BrokenPipeError:
@@ -116,18 +134,31 @@ class ClientConnection(Thread):
             self._q.put(({"action": "MESSAGE", "message": "/q", "source": "CLIENT"}, self))
             self._connected = False
 
-    def get_id(self) -> int:
-        return self._id
 
-    def disconnect(self, msg: str = "You disconnected from the server. Press enter to exit.") -> None:
+    def get_id(self) -> int:
+        """
+        Get the ID of this client.
+        """
+        return self._client_id
+
+
+    def disconnect(
+            self,
+            msg: str = "You disconnected from the server. Press enter to exit."
+        ) -> None:
+        """
+        Disconnect from the server. Send the specified message to the client.
+        """
         self._stopped = True
         if self._connected:
             self.send({"action": "DISCONNECT", "message": msg, "source": "SERVER"})
         self._sock.close()
 
-    
 
 class Server(Thread):
+    """
+    A class representing the server. Runs as its own thread.
+    """
     def __init__(self, name):
         """ Initialize. """
         super().__init__()
@@ -144,7 +175,8 @@ class Server(Thread):
         try:
             self._sock.bind(("", DEFAULT_PORT))
         except OSError:
-            print("The port for this application is already in use or wasn't properly freed last time.")
+            print("The port for this application is already in use \
+                  or wasn't properly freed last time.")
             print("Would you like to wait until it's available? (y/n)")
             if input("> ") == "y":
                 num_dots = 0
@@ -175,9 +207,18 @@ class Server(Thread):
 
         self._done = False
 
-    def run(self):
-        """ Run the thread. """
-        connections_thread = ConnectionGetter(self, self._n, self._g, self._private_key, self._partial_key)
+
+    def run(self) -> None:
+        """
+        Run the thread.
+        """
+        connections_thread = ConnectionGetter(
+            self,
+            self._n,
+            self._g,
+            self._private_key,
+            self._partial_key
+        )
         connections_thread.start()
 
         while True:
@@ -191,15 +232,28 @@ class Server(Thread):
                 if self._replier_thread is not None:
                     self._replier_thread.join()
                 return
-            
+
+
     def is_done(self) -> bool:
+        """
+        Check if the server is done.
+        """
         return self._done
 
+
     def make_visible(self):
+        """
+        Start the thread that responds to broadcasts,
+        thus making this host "visible" on the LAN.
+        """
         self._replier_thread = Thread(target=reply_to_broadcasts, args=(self._host_name, self))
         self._replier_thread.start()
 
+
     def _info_msg(self, sender: ClientConnection) -> str:
+        """
+        Get the server info message.
+        """
         msg =   "Server info:\n"
         msg +=  "         ---------------------\n"
         msg += f"         Server name: {self._host_name}\n"
@@ -210,8 +264,12 @@ class Server(Thread):
             msg += f"           {client.get_name()}\n"
         msg += f"         Your username is {sender.get_name()}"
         return msg
-    
+
+
     def _help_msg(self) -> str:
+        """
+        Get the chat command help message.
+        """
         return \
          """Help menu:
          -----------------
@@ -220,22 +278,33 @@ class Server(Thread):
          /q /quit - disconnect"""
         #  /kick {id} - kick the player with the id
         #  /ban {id} - bans the player with the id by blacklisting their ip address"""
-    
+
+
     def _disconnect_client(self, client_id: int) -> bool:
+        """
+        Disconnect the client based on its ID.
+        """
         disconnected = False
         for client in reversed(self._clients):
             if client.get_id() == client_id or client_id == 0:
                 client.disconnect()
                 client.join()
                 self._clients.remove(client)
-                self._send_all_clients({"action": "MESSAGE", "message": f"{client.get_name()} disconnected.", "source": "SERVER"})
+                self._send_all_clients({
+                    "action": "MESSAGE",
+                    "message": f"{client.get_name()} disconnected.",
+                    "source": "SERVER"
+                })
                 if len(self._clients) == 0:
                     raise NoMoreClients
                 disconnected = True
         return disconnected
-                
+
 
     def _handle_command(self, sender: ClientConnection, cmd: str) -> None:
+        """
+        Handle the command that the user sent.
+        """
         msg = ""
         if cmd == "info":
             msg = self._info_msg(sender)
@@ -245,57 +314,98 @@ class Server(Thread):
             self._disconnect_client(sender.get_id())
             return
         else:
-            sender.send({"action": "ERROR", "message": f"ERR 3: UNKNOWN COMMAND: /{cmd}", "source": "SERVER"})
+            sender.send({
+                "action": "ERROR",
+                "message": f"ERR 3: UNKNOWN COMMAND: /{cmd}",
+                "source": "SERVER"
+            })
             return
 
         sender.send({"action": "MESSAGE", "message": msg, "source": "SERVER"})
 
 
     def _handle_packet(self, packet: Dict[str, str], sender: ClientConnection) -> None:
+        """
+        Handle a packet sent by the client.
+        """
         try:
             action = packet["action"]
             msg = packet["message"]
 
         except KeyError:
             return
-        
+
         if action == "MESSAGE":
             if not sender.is_ready():
-                sender.send({"action": "ERROR", "message": "ERR 1: CANNOT SEND MESSAGE BEFORE FULLY CONNECTED", "source": "SERVER"})
+                sender.send({
+                    "action": "ERROR",
+                    "message": "ERR 1: CANNOT SEND MESSAGE BEFORE FULLY CONNECTED",
+                    "source": "SERVER"
+                })
                 return
             if msg[0] == "/" or msg[0] == "\\":
                 self._handle_command(sender, msg[1:])
                 return
-            self._send_all_clients({"action": "MESSAGE", "message": msg, "source": sender.get_name()})
-            return
-        
-        if action == "CONNECT":
-            if msg == "":
-                sender.send({"action": "ERROR", "message": "ERR 2: NAME CANNOT BE BLANK", "source": "SERVER"})
-                return
-            sender.set_name(msg)
-            self._send_all_clients({"action": "MESSAGE", "message": f"{sender.get_name()} has joined.", "source": "SERVER"})
+            self._send_all_clients({
+                "action": "MESSAGE",
+                "message": msg,
+                "source": sender.get_name()
+            })
             return
 
-        
+        if action == "CONNECT":
+            if msg == "":
+                sender.send({
+                    "action": "ERROR",
+                    "message": "ERR 2: NAME CANNOT BE BLANK",
+                    "source": "SERVER"
+                })
+                return
+
+            sender.set_name(msg)
+            self._send_all_clients({
+                "action": "MESSAGE",
+                "message": f"{sender.get_name()} has joined.",
+                "source": "SERVER"
+            })
+            return
+
+
     def _send_all_clients(self, packet: Dict[str, str]) -> None:
+        """
+        Send the packet to all clients.
+        """
         for client in self._clients:
             client.send(packet)
 
+
     def _recv(self) -> Tuple[Dict[str, str], ClientConnection]:
+        """
+        Receive the next queued packet.
+        """
         return self._q.get()
-    
+
+
     def accept(self) -> Tuple[str, Tuple[str, int]]:
+        """
+        Accept a client.
+        """
         return self._sock.accept()
-    
+
+
     def add_client(self, lcsock: LCSocket) -> None:
+        """
+        Add a client to the server to manage.
+        """
         self._clients.append(ClientConnection(self._next_client_id, lcsock, self._q))
         self._next_client_id += 1
         self._clients[-1].start()
 
 
-# Thread to get new connections
 class ConnectionGetter(Thread):
+    """
+    A thread to receive clients and initialize the encryption.
+    """
     def __init__(self, server: Server, n: int, g: int, secret_key: int, partial_key: int) -> None:
         super().__init__()
         self._stopped = False
@@ -306,13 +416,21 @@ class ConnectionGetter(Thread):
         self._secret_key = secret_key
         self._partial_key = partial_key
 
+
     def stop(self) -> None:
+        """
+        Stop this thread.
+        """
         self._stopped = True
 
+
     def run(self) -> None:
+        """
+        Run the thread.
+        """
         while not self._stopped:
             try:
-                client_sock, addr = self._server.accept()
+                client_sock, _addr = self._server.accept()
                 lcsock = LCSocket(client_sock)
                 # lcsock.setup_encryption()
                 self.setup_encryption(lcsock)
@@ -323,6 +441,7 @@ class ConnectionGetter(Thread):
                 lcsock.close()
                 continue
 
+
     def setup_encryption(self, lcsock: LCSocket) -> None:
         """
         Communicate with client to set up e2e encryption.
@@ -331,7 +450,11 @@ class ConnectionGetter(Thread):
         """
         # Inform client of n and g and our partial key
         try:
-            lcsock.full_send({"action": "SETUP_ENCRYPTION", "message": f"{self._n},{self._g},{self._partial_key}", "source": "SERVER"})
+            lcsock.full_send({
+                "action": "SETUP_ENCRYPTION",
+                "message": f"{self._n},{self._g},{self._partial_key}",
+                "source": "SERVER"
+            })
         except BrokenPipeError:
             lcsock.close()
             return
@@ -340,7 +463,7 @@ class ConnectionGetter(Thread):
         if pack["action"] != "SETUP_ENCRYPTION":
             raise ValueError
         other_partial = int(pack["message"])
-        
+
         symmetrical_key = diffie_second_step(other_partial, self._secret_key, self._n)
 
         lcsock.set_encryption_key(symmetrical_key)
