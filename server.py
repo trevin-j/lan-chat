@@ -175,8 +175,7 @@ class Server(Thread):
         try:
             self._sock.bind(("", DEFAULT_PORT))
         except OSError:
-            print("The port for this application is already in use \
-                  or wasn't properly freed last time.")
+            print("The port for this application is already in use or wasn't properly freed.")
             print("Would you like to wait until it's available? (y/n)")
             if input("> ") == "y":
                 num_dots = 0
