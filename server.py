@@ -274,8 +274,8 @@ class Server(Thread):
          -----------------
          /info - receive server info
          /h /help - display help menu
-         /q /quit - disconnect"""
-        #  /kick {id} - kick the player with the id
+         /q /quit - disconnect
+         /kick {id} - kick the player with the id"""
         #  /ban {id} - bans the player with the id by blacklisting their ip address"""
 
 
