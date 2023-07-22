@@ -315,6 +315,8 @@ class Server(Thread):
         """
         msg = ""
         split_cmd = cmd.split()
+        if len(split_cmd) == 0:
+            return
         if cmd == "info":
             msg = self._info_msg(sender)
         elif cmd == "help" or cmd == "h":
@@ -323,6 +325,13 @@ class Server(Thread):
             self._disconnect_client(sender.get_id())
             return
         elif split_cmd[0] == "kick":
+            if sender.get_id() != 0:
+                sender.send({
+                    "action": "ERROR",
+                    "message": "ERR 7: ONLY HOST CAN KICK",
+                    "source": "SERVER"
+                })
+                return
             if len(split_cmd) < 2:
                 sender.send({
                     "action": "ERROR",
@@ -334,6 +343,13 @@ class Server(Thread):
                 sender.send({
                     "action": "ERROR",
                     "message": "ERR 6: TARGET MUST BE INTEGER",
+                    "source": "SERVER"
+                })
+                return
+            if split_cmd[1] == "0":
+                sender.send({
+                    "action": "ERROR",
+                    "message": "ERR 8: CANNOT KICK HOST",
                     "source": "SERVER"
                 })
                 return
