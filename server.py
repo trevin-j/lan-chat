@@ -118,7 +118,7 @@ class ClientConnection(Thread):
 
     def get_name(self) -> str:
         """
-        Get the client name.
+        Get the client name in form "#{id}:{name}"
         """
         return f"#{self._client_id}:{self._name}"
 
@@ -142,10 +142,7 @@ class ClientConnection(Thread):
         return self._client_id
 
 
-    def disconnect(
-            self,
-            msg: str = "You disconnected from the server. Press enter to exit."
-        ) -> None:
+    def disconnect(self, msg: str) -> None:
         """
         Disconnect from the server. Send the specified message to the client.
         """
@@ -279,19 +276,31 @@ class Server(Thread):
         #  /ban {id} - bans the player with the id by blacklisting their ip address"""
 
 
-    def _disconnect_client(self, client_id: int) -> bool:
+    def _disconnect_client(self, client_id: int, disconnect_type: str="disconnect") -> bool:
         """
         Disconnect the client based on its ID.
+        client_id: the id of the client to disconnect.
+        disconnect_type: "disconnect", "kick" - the type of disconnect
+        returns True if successfully disconnected
         """
         disconnected = False
+
+        msg = "{0} disconnected."
+        client_msg = "You have disconnected. Press enter to quit."
+
+        # Generate message. {0} represents the client name
+        if disconnect_type == "kick":
+            msg = "{0} was kicked."
+            client_msg = "You were kicked from the room. Press enter to quit."
+
         for client in reversed(self._clients):
             if client.get_id() == client_id or client_id == 0:
-                client.disconnect()
+                client.disconnect(client_msg)
                 client.join()
                 self._clients.remove(client)
                 self._send_all_clients({
                     "action": "MESSAGE",
-                    "message": f"{client.get_name()} disconnected.",
+                    "message": msg.format(client.get_name()),
                     "source": "SERVER"
                 })
                 if len(self._clients) == 0:
@@ -305,12 +314,36 @@ class Server(Thread):
         Handle the command that the user sent.
         """
         msg = ""
+        split_cmd = cmd.split()
         if cmd == "info":
             msg = self._info_msg(sender)
         elif cmd == "help" or cmd == "h":
             msg = self._help_msg()
         elif cmd in ("q", "quit"):
             self._disconnect_client(sender.get_id())
+            return
+        elif split_cmd[0] == "kick":
+            if len(split_cmd) < 2:
+                sender.send({
+                    "action": "ERROR",
+                    "message": "ERR 4: MISSING COMMAND TARGET",
+                    "source": "SERVER"
+                })
+                return
+            if not split_cmd[1].isdigit():
+                sender.send({
+                    "action": "ERROR",
+                    "message": "ERR 6: TARGET MUST BE INTEGER",
+                    "source": "SERVER"
+                })
+                return
+            success = self._disconnect_client(int(split_cmd[1]), "kick")
+            if not success:
+                sender.send({
+                    "action": "ERROR",
+                    "message": "ERR 5: COMMAND TARGET DOES NOT EXIST",
+                    "source": "SERVER"
+                })
             return
         else:
             sender.send({
